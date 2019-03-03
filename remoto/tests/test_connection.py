@@ -1,81 +1,29 @@
-from py.test import raises
-from remoto import connection
+import pytest
+from remoto.connection import get
 
 
-class FakeSocket(object):
+base_names = [
+    'ssh', 'oc', 'openshift', 'kubernetes', 'k8s', 'local', 'popen', 'localhost', 'docker', 'podman',
+]
 
-    def __init__(self, gethostname):
-        self.gethostname = lambda: gethostname
+capitalized_names = [n.capitalize() for n in base_names]
 
+spaced_names = [" %s " % n for n in base_names]
 
-class TestNeedsSsh(object):
-
-    def test_short_hostname_matches(self):
-        socket = FakeSocket('foo.example.org')
-        assert connection.needs_ssh('foo', socket) is False
-
-    def test_long_hostname_matches(self):
-        socket = FakeSocket('foo.example.org')
-        assert connection.needs_ssh('foo.example.org', socket) is False
-
-    def test_hostname_does_not_match(self):
-        socket = FakeSocket('foo')
-        assert connection.needs_ssh('meh', socket) is True
+valid_names = base_names + capitalized_names + spaced_names
 
 
-class FakeGateway(object):
+class TestGet(object):
 
-    def remote_exec(self, module):
-        pass
+    @pytest.mark.parametrize('name', valid_names)
+    def test_valid_names(self, name):
+        conn_class = get(name)
+        assert conn_class.__name__.endswith('Connection')
 
+    def test_fallback(self):
+        conn_class = get('non-existent')
+        assert conn_class.__name__ == 'BaseConnection'
 
-class TestModuleExecuteArgs(object):
-
-    def setup(self):
-        self.remote_module = connection.ModuleExecute(FakeGateway(), None)
-
-    def test_single_argument(self):
-        assert self.remote_module._convert_args(('foo',)) == "'foo'"
-
-    def test_more_than_one_argument(self):
-        args = ('foo', 'bar', 1)
-        assert self.remote_module._convert_args(args) == "'foo', 'bar', 1"
-
-    def test_dictionary_as_argument(self):
-        args = ({'some key': 1},)
-        assert self.remote_module._convert_args(args) == "{'some key': 1}"
-
-
-class TestModuleExecuteGetAttr(object):
-
-    def setup(self):
-        self.remote_module = connection.ModuleExecute(FakeGateway(), None)
-
-    def test_raise_attribute_error(self):
-        with raises(AttributeError) as err:
-            self.remote_module.foo()
-        assert err.value.args[0] == 'module None does not have attribute foo'
-
-
-class TestMakeConnectionString(object):
-
-    def test_makes_sudo_python_no_ssh(self):
-        conn = connection.Connection('localhost', sudo=True, eager=False)
-        conn_string = conn._make_connection_string('localhost', _needs_ssh=lambda x: False)
-        assert conn_string == 'popen//python=sudo python'
-
-    def test_makes_sudo_python_with_ssh(self):
-        conn = connection.Connection('localhost', sudo=True, eager=False)
-        conn_string = conn._make_connection_string('localhost', _needs_ssh=lambda x: True)
-        assert conn_string == 'ssh=localhost//python=sudo python'
-
-    def test_makes_python_no_ssh(self):
-        conn = connection.Connection('localhost', sudo=False, eager=False)
-        conn_string = conn._make_connection_string('localhost', _needs_ssh=lambda x: False)
-        assert conn_string == 'popen//python=python'
-
-    def test_makes_python_with_ssh(self):
-        conn = connection.Connection('localhost', sudo=False, eager=False)
-        conn_string = conn._make_connection_string('localhost', _needs_ssh=lambda x: True)
-        assert conn_string == 'ssh=localhost//python=python'
-
+    def test_custom_fallback(self):
+        conn_class = get('non-existent', 'openshift')
+        assert conn_class.__name__ == 'OpenshiftConnection'

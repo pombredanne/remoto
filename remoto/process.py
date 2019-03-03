@@ -6,6 +6,7 @@ from .util import admin_command, RemoteError
 def _remote_run(channel, cmd, **kw):
     import subprocess
     import sys
+    from select import select
     stop_on_nonzero = kw.pop('stop_on_nonzero', True)
 
     process = subprocess.Popen(
@@ -16,30 +17,85 @@ def _remote_run(channel, cmd, **kw):
         **kw
     )
 
-    if process.stdout:
-        while True:
-            out = process.stdout.readline()
-            if out == '' and process.poll() is not None:
-                break
-            if out != '':
-                channel.send({'debug': out})
-                sys.stdout.flush()
+    while True:
+        reads, _, _ = select(
+            [process.stdout.fileno(), process.stderr.fileno()],
+            [], []
+        )
 
-    if process.stderr:
-        while True:
-            err = process.stderr.readline()
-            if err == '' and process.poll() is not None:
-                break
-            if err != '':
-                channel.send({'warning': err})
-                sys.stderr.flush()
+        for descriptor in reads:
+            if descriptor == process.stdout.fileno():
+                read = process.stdout.readline()
+                if read:
+                    channel.send({'debug': read})
+                    sys.stdout.flush()
+
+            if descriptor == process.stderr.fileno():
+                read = process.stderr.readline()
+                if read:
+                    channel.send({'warning': read})
+                    sys.stderr.flush()
+
+        if process.poll() is not None:
+            # ensure we do not have anything pending in stdout or stderr
+            # unfortunately, we cannot abstract this repetitive loop into its
+            # own function because execnet does not allow for non-global (or
+            # even nested functions). This must be repeated here.
+            while True:
+                err_read = out_read = None
+                for descriptor in reads:
+                    if descriptor == process.stdout.fileno():
+                        out_read = process.stdout.readline()
+                        if out_read:
+                            channel.send({'debug': out_read})
+                            sys.stdout.flush()
+
+                    if descriptor == process.stderr.fileno():
+                        err_read = process.stderr.readline()
+                        if err_read:
+                            channel.send({'warning': err_read})
+                            sys.stderr.flush()
+                # At this point we have gone through all the possible
+                # descriptors and `read` was empty, so we now can break out of
+                # this since all stdout/stderr has been properly flushed to
+                # logging
+                if not err_read and not out_read:
+                    break
+
+            break
 
     returncode = process.wait()
     if returncode != 0:
         if stop_on_nonzero:
-            raise RuntimeError("command returned non-zero exit status: %s" % returncode)
+            raise RuntimeError(
+                "command returned non-zero exit status: %s" % returncode
+            )
         else:
             channel.send({'warning': "command returned non-zero exit status: %s" % returncode})
+
+
+def extend_env(conn, arguments):
+    """
+    get the remote environment's env so we can explicitly add the path without
+    wiping out everything
+    """
+    # retrieve the remote environment variables for the host
+    try:
+        result = conn.gateway.remote_exec("import os; channel.send(os.environ.copy())")
+        env = result.receive()
+    except Exception:
+        conn.logger.exception('failed to retrieve the remote environment variables')
+        env = {}
+
+    # get the $PATH and extend it (do not overwrite)
+    path = env.get('PATH', '')
+    env['PATH'] = path + '/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin'
+    arguments['env'] = env
+    if arguments.get('extend_env'):
+        for key, value in arguments['extend_env'].items():
+            arguments['env'][key] = value
+        arguments.pop('extend_env')
+    return arguments
 
 
 def run(conn, command, exit=False, timeout=None, **kw):
@@ -54,13 +110,13 @@ def run(conn, command, exit=False, timeout=None, **kw):
                     (defaults to wait for ever)
     """
     stop_on_error = kw.pop('stop_on_error', True)
-    kw.setdefault(
-        'env',
-        {
-            'PATH':
-            '/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin'
-        }
-    )
+    if not kw.get('env'):
+        # get the remote environment's env so we can explicitly add
+        # the path without wiping out everything
+        kw = extend_env(conn, kw)
+
+    command = conn.cmd(command)
+
     timeout = timeout or conn.global_timeout
     conn.logger.info('Running command: %s' % ' '.join(admin_command(conn.sudo, command)))
     result = conn.execute(_remote_run, cmd=command, **kw)
@@ -84,12 +140,27 @@ def run(conn, command, exit=False, timeout=None, **kw):
 
 def _remote_check(channel, cmd, **kw):
     import subprocess
-
+    stdin = kw.pop('stdin', None)
     process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, **kw
     )
-    stdout = [line.strip('\n') for line in process.stdout.readlines()]
-    stderr = [line.strip('\n') for line in process.stderr.readlines()]
+
+    if stdin:
+        if not isinstance(stdin, bytes):
+            stdin.encode('utf-8', errors='ignore')
+        stdout_stream, stderr_stream = process.communicate(stdin)
+    else:
+        stdout_stream = process.stdout.read()
+        stderr_stream = process.stderr.read()
+
+    try:
+        stdout_stream = stdout_stream.decode('utf-8')
+        stderr_stream = stderr_stream.decode('utf-8')
+    except AttributeError:
+        pass
+
+    stdout = stdout_stream.splitlines()
+    stderr = stderr_stream.splitlines()
     channel.send((stdout, stderr, process.wait()))
 
 
@@ -101,19 +172,20 @@ def check(conn, command, exit=False, timeout=None, **kw):
     This helper function *does not* provide any logging as it is the caller's
     responsibility to do so.
     """
+    command = conn.cmd(command)
+
     stop_on_error = kw.pop('stop_on_error', True)
     timeout = timeout or conn.global_timeout
-    kw.setdefault(
-        'env',
-        {
-            'PATH':
-            '/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin'
-        }
-    )
+    if not kw.get('env'):
+        # get the remote environment's env so we can explicitly add
+        # the path without wiping out everything
+        kw = extend_env(conn, kw)
+
     conn.logger.info('Running command: %s' % ' '.join(admin_command(conn.sudo, command)))
     result = conn.execute(_remote_check, cmd=command, **kw)
+    response = None
     try:
-        return result.receive(timeout)
+        response = result.receive(timeout)
     except Exception as err:
         # the things we need to do here :(
         # because execnet magic, we cannot catch this as
@@ -121,7 +193,9 @@ def check(conn, command, exit=False, timeout=None, **kw):
         if err.__class__.__name__ == 'TimeoutError':
             msg = 'No data was received after %s seconds, disconnecting...' % timeout
             conn.logger.warning(msg)
-            return
+            # there is no stdout, stderr, or exit code but make the exit code
+            # an error condition (non-zero) regardless
+            return [], [], -1
         else:
             remote_trace = traceback.format_exc()
             remote_error = RemoteError(remote_trace)
@@ -136,3 +210,4 @@ def check(conn, command, exit=False, timeout=None, **kw):
                 )
     if exit:
         conn.exit()
+    return response

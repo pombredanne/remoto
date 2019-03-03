@@ -1,3 +1,129 @@
+1.1.0
+-----
+26-Feb-2019
+
+* Allow to specify ``--context`` to kubernetes connections
+* When a remote exception happens using the ``JsonModuleExecute``, include both
+  stderr and stdout.
+
+
+1.0.0
+-----
+13-Feb-2019
+
+* Create other connection backends aside from ssh and local: kubernetes,
+  podman, docker, and openshift.
+* Adds new remote function/module execution model for non-native (for execnet) backends, so that
+  modules will work in backends like kubernetes.
+* Create a helper (``remoto.connection.get()``) for retrieving connection
+  backends based on strings
+* Increase the test coverage.
+* Allow using ``localhost``, ``127.0.0.1``, and ``127.0.1.1`` to detect local
+  connections (before the full hostname was required, as returned by
+  ``socket.gethostname()``)
+* No longer require creating ``logging`` loggers to pass in to connection
+  classes, it will create a basic one when undefined.
+
+
+0.0.35
+------
+8-Jan-2019
+
+* Fix the botched 0.0.34 version which had stale commits from 0.0.32 - No code
+  changes.
+
+
+0.0.34
+------
+12-Dec-2018
+
+* Allow ``ssh_options`` to extend ssh flags in the ``Connection()`` object
+
+
+0.0.33
+------
+17-Jul-2018
+
+* ``extend_env`` needs to be removed from ``**kw`` **only** when present.
+
+
+0.0.32
+------
+16-Jul-2018
+
+* ``extend_env`` needs to be removed from ``**kw`` as it is being passed onto
+  subprocess, which renders it invalid
+
+
+0.0.31
+------
+10-Jul-2018
+
+* Extend environment variables, do not overwrite
+
+
+0.0.30
+------
+05-Jul-2016
+
+* Fix test issue with py3
+* Remove vendored execnet
+* Include tests when building
+* Strip carriage-returns from messages in logs
+
+0.0.29
+------
+17-May-2016
+* Catch possible errors when remotes are missing the right Python interpreter
+
+0.0.28
+------
+11-May-2016
+* Avoid needless list comprehension that caused issues with Python 3
+* Do not bare return when clients expect a three item tuple always
+* Fix an issue where ``process.check`` would need to raise exit but the
+  response had an error.
+
+22-Dec-2015
+0.0.27
+------
+22-Dec-2015
+* Fix a problem where stderr/stdout variables would be undefined on certain
+  conditions when running a remote command.
+
+0.0.26
+------
+15-Dec-2015
+* Fix (issue 19) where stdout and stderr would be prematurely ended and not
+  fully logged.
+
+0.0.25
+------
+21-Apr-2015
+* Fix (issue 15) where a child process could finish but output would not be
+  flushed to stdout/stderr.
+
+0.0.24
+------
+* Ship the ``LICENSE`` file and ``tests`` directory as part of the
+  distribution.
+
+0.0.23
+------
+* Output the exact same order of remote ``stdout`` and ``stderr``
+
+0.0.22
+------
+* Create a better detection mechanism for remote ``sudo`` needs
+
+0.0.21
+------
+* Do not override remote environment variables to set the ``$PATH``
+
+0.0.20
+------
+* Fix unneeded ssh connection when using FQDN hosts
+
 0.0.19
 ------
 * Fix ``vendor.py`` to really include the proper tag for ``execnet``

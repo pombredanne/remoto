@@ -20,7 +20,7 @@ lib64
 pip-log.txt
 
 # Unit test / coverage reports
-.coverage
+.coverage*
 .tox
 nosetests.xml
 
@@ -31,7 +31,3 @@ nosetests.xml
 .mr.developer.cfg
 .project
 .pydevproject
-
-# vendor
-remoto/lib/vendor/execnet
-execnet
